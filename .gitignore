@@ -22,5 +22,7 @@ crash.log
 
 # Local backend settings (bucket name), written from the bootstrap output
 infra/bootstrap/backend.hcl
+# The bootstrap's first apply, before its state bucket exists (README step 3)
+infra/bootstrap/first_run_override.tf
 
 .annotatie/
