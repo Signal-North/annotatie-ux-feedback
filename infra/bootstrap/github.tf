@@ -1,5 +1,5 @@
 # The repository, its production environment and its (non-secret) variables.
-# GitHub holds no secrets: AWS is reached by OIDC, the Cloudflare token lives in SSM.
+# GitHub holds no secrets: AWS is reached by OIDC.
 
 resource "github_repository" "this" {
   count = var.create_github_repo ? 1 : 0
@@ -47,14 +47,13 @@ resource "github_repository_environment_deployment_policy" "main_only" {
 
 locals {
   actions_variables = {
-    AWS_ACCOUNT_ID      = local.account_id
-    AWS_REGION          = var.aws_region
-    TF_STATE_BUCKET     = aws_s3_bucket.state.bucket
-    DOMAIN_NAME         = var.domain_name
-    CLOUDFLARE_ZONE     = var.cloudflare_zone
-    CF_TOKEN_PARAM      = var.cloudflare_token_parameter
-    CF_READ_TOKEN_PARAM = var.cloudflare_read_token_parameter
-    ALARM_EMAIL         = var.budget_email
+    AWS_ACCOUNT_ID     = local.account_id
+    AWS_REGION         = var.aws_region
+    TF_STATE_BUCKET    = aws_s3_bucket.state.bucket
+    DOMAIN_NAME        = var.domain_name
+    ROUTE53_ZONE       = var.route53_zone
+    CERTIFICATE_DOMAIN = local.certificate_domain
+    ALARM_EMAIL        = var.budget_email
   }
 }
 

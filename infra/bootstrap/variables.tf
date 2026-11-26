@@ -47,26 +47,30 @@ variable "monthly_budget_usd" {
   default     = 5
 }
 
+variable "budget_filter_by_project_tag" {
+  description = "Measure only spend tagged project = annotatie (needed in a shared account; activate the tag in Billing)."
+  type        = bool
+  default     = true
+}
+
 variable "domain_name" {
-  description = "The platform's hostname."
+  description = "The platform's hostname, inside route53_zone."
   type        = string
-  default     = "annotatie.consulteasy.co.uk"
 }
 
-variable "cloudflare_zone" {
-  description = "The Cloudflare zone that holds domain_name."
+variable "route53_zone" {
+  description = "The existing public Route 53 hosted zone that holds domain_name. The deploy role may change only that one A record in it."
   type        = string
-  default     = "consulteasy.co.uk"
 }
 
-variable "cloudflare_token_parameter" {
-  description = "SSM SecureString holding the Cloudflare API token (DNS Edit on the zone). You put it there by CLI; OpenTofu never sees its value."
+variable "certificate_domain" {
+  description = "Primary domain of the existing ISSUED us-east-1 ACM certificate covering domain_name. null = route53_zone."
   type        = string
-  default     = "/annotatie/cloudflare/api-token"
+  default     = null
 }
 
-variable "cloudflare_read_token_parameter" {
-  description = "SSM SecureString holding a read-only Cloudflare token (Zone Read + DNS Read), used by PR plans."
-  type        = string
-  default     = "/annotatie/cloudflare/api-token-read"
+variable "create_github_oidc_provider" {
+  description = "Create the account's GitHub OIDC provider. Set false when the account already has one (it is then read, not managed)."
+  type        = bool
+  default     = true
 }

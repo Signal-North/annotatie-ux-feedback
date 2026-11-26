@@ -7,6 +7,16 @@ locals {
   name         = "annotatie"
   state_bucket = "${local.name}-tfstate-${local.account_id}"
   repo_full    = "${var.github_owner}/${var.github_repo}"
+
+  certificate_domain = coalesce(var.certificate_domain, var.route53_zone)
+  # Route 53's normalised form: lower case, no trailing dot.
+  site_record_name = lower(trimsuffix(var.domain_name, "."))
+}
+
+# The existing zone the platform's one A record lives in (never created here).
+data "aws_route53_zone" "site" {
+  name         = var.route53_zone
+  private_zone = false
 }
 
 # Refuse to bootstrap the wrong account (your default profile may point elsewhere).
@@ -107,6 +117,16 @@ resource "aws_budgets_budget" "monthly" {
   limit_amount = tostring(var.monthly_budget_usd)
   limit_unit   = "USD"
   time_unit    = "MONTHLY"
+
+  # In a shared account an unfiltered budget measures everyone's spend. The tag only counts once it
+  # is activated as a cost-allocation tag in Billing.
+  dynamic "cost_filter" {
+    for_each = var.budget_filter_by_project_tag ? [1] : []
+    content {
+      name   = "TagKeyValue"
+      values = [format("user:project$%s", local.name)] # user:project$annotatie
+    }
+  }
 
   notification {
     comparison_operator        = "GREATER_THAN"

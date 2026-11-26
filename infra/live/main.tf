@@ -2,15 +2,20 @@ data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
 
 locals {
+  certificate_domain = coalesce(var.certificate_domain, var.route53_zone)
+}
+
+locals {
   name         = "annotatie"
   account_id   = data.aws_caller_identity.current.account_id
   boundary_arn = "arn:${data.aws_partition.current.partition}:iam::${local.account_id}:policy/${local.name}-boundary"
 }
 
 module "edge" {
-  source          = "../modules/edge"
-  domain_name     = var.domain_name
-  cloudflare_zone = var.cloudflare_zone
+  source             = "../modules/edge"
+  domain_name        = var.domain_name
+  route53_zone       = var.route53_zone
+  certificate_domain = local.certificate_domain
   providers = {
     aws = aws.us_east_1
   }
@@ -265,15 +270,24 @@ resource "aws_s3_bucket_policy" "static" {
   policy = data.aws_iam_policy_document.static_read.json
 }
 
-# annotatie.consulteasy.co.uk -> CloudFront, DNS only (grey cloud).
-resource "cloudflare_dns_record" "site" {
-  zone_id = module.edge.cloudflare_zone_id
+# The platform's hostname -> CloudFront: one A-alias in the existing zone (no zone is declared).
+resource "aws_route53_record" "site" {
+  zone_id = module.edge.route53_zone_id
   name    = var.domain_name
-  type    = "CNAME"
-  content = module.cdn.distribution_domain_name
-  ttl     = 300
-  proxied = var.cloudflare_proxied
-  comment = "Annotatie, managed by OpenTofu"
+  type    = "A"
+
+  alias {
+    name                   = module.cdn.distribution_domain_name
+    zone_id                = module.cdn.distribution_hosted_zone_id
+    evaluate_target_health = false
+  }
+
+  lifecycle {
+    precondition {
+      condition     = endswith(var.domain_name, ".${var.route53_zone}")
+      error_message = "domain_name must be a name inside route53_zone."
+    }
+  }
 }
 
 module "observability" {

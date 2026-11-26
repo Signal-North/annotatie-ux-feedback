@@ -4,24 +4,19 @@ variable "aws_region" {
 }
 
 variable "domain_name" {
-  description = "The platform's hostname."
+  description = "The platform's hostname (no default: the bootstrap writes it to the DOMAIN_NAME variable)."
   type        = string
-  default     = "annotatie.consulteasy.co.uk"
 }
 
-variable "cloudflare_zone" {
-  type    = string
-  default = "consulteasy.co.uk"
+variable "route53_zone" {
+  description = "The existing public Route 53 hosted zone that holds domain_name. Only one record is added to it."
+  type        = string
 }
 
-variable "cloudflare_proxied" {
-  description = "Put Cloudflare's proxy in front (cost-register.md §5, option B). Needs the origin lock first; keep false."
-  type        = bool
-  default     = false
-  validation {
-    condition     = var.cloudflare_proxied == false
-    error_message = "Proxy mode needs the origin-lock work (cost-register.md §5) before it can be turned on."
-  }
+variable "certificate_domain" {
+  description = "Primary domain of the existing ISSUED us-east-1 ACM certificate covering domain_name. null = route53_zone."
+  type        = string
+  default     = null
 }
 
 variable "build_sha" {

@@ -1,12 +1,11 @@
-# The CloudFront certificate (free, ACM in us-east-1), validated by CNAMEs in Cloudflare.
+# The edge in an account that already owns its DNS zone and certificate: both are looked up, never
+# created. The CloudFront certificate is an existing ISSUED ACM certificate in us-east-1 (pass the
+# us-east-1 provider as "aws"); the hostname's record goes into an existing public Route 53 zone.
 
 terraform {
   required_providers {
     aws = {
       source = "hashicorp/aws"
-    }
-    cloudflare = {
-      source = "cloudflare/cloudflare"
     }
   }
 }
@@ -15,46 +14,31 @@ variable "domain_name" {
   type = string
 }
 
-variable "cloudflare_zone" {
-  type = string
+variable "route53_zone" {
+  description = "The existing public Route 53 hosted zone that holds domain_name (no zone is created)."
+  type        = string
 }
 
-data "cloudflare_zone" "this" {
-  filter = {
-    name = var.cloudflare_zone
-  }
+variable "certificate_domain" {
+  description = "The primary domain of the existing us-east-1 ACM certificate that covers domain_name."
+  type        = string
 }
 
-resource "aws_acm_certificate" "this" {
-  domain_name       = var.domain_name
-  validation_method = "DNS"
-  lifecycle {
-    create_before_destroy = true
-  }
+data "aws_acm_certificate" "this" {
+  domain      = var.certificate_domain
+  statuses    = ["ISSUED"]
+  most_recent = true
 }
 
-resource "cloudflare_dns_record" "validation" {
-  for_each = {
-    for o in aws_acm_certificate.this.domain_validation_options : o.domain_name => o
-  }
-  zone_id = data.cloudflare_zone.this.id
-  name    = trimsuffix(each.value.resource_record_name, ".")
-  type    = each.value.resource_record_type
-  content = trimsuffix(each.value.resource_record_value, ".")
-  ttl     = 300
-  proxied = false
-  comment = "ACM validation for ${var.domain_name}, managed by OpenTofu"
-}
-
-resource "aws_acm_certificate_validation" "this" {
-  certificate_arn         = aws_acm_certificate.this.arn
-  validation_record_fqdns = [for r in cloudflare_dns_record.validation : r.name]
+data "aws_route53_zone" "this" {
+  name         = var.route53_zone
+  private_zone = false
 }
 
 output "certificate_arn" {
-  value = aws_acm_certificate_validation.this.certificate_arn
+  value = data.aws_acm_certificate.this.arn
 }
 
-output "cloudflare_zone_id" {
-  value = data.cloudflare_zone.this.id
+output "route53_zone_id" {
+  value = data.aws_route53_zone.this.zone_id
 }

@@ -6,10 +6,6 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.80"
     }
-    cloudflare = {
-      source  = "cloudflare/cloudflare"
-      version = "~> 5.0"
-    }
     archive = {
       source  = "hashicorp/archive"
       version = "~> 2.6"
@@ -47,6 +43,3 @@ provider "aws" {
     tags = local.tags
   }
 }
-
-# Token from CLOUDFLARE_API_TOKEN, which the workflow reads from SSM (never a GitHub secret).
-provider "cloudflare" {}
