@@ -1,6 +1,13 @@
 # GitHub Actions reaches AWS by OIDC: no access keys exist, so GitHub holds no AWS secret.
 
+# An account holds one provider per URL: reuse an existing one rather than collide with it.
+data "aws_iam_openid_connect_provider" "github" {
+  count = var.create_github_oidc_provider ? 0 : 1
+  url   = "https://token.actions.githubusercontent.com"
+}
+
 resource "aws_iam_openid_connect_provider" "github" {
+  count          = var.create_github_oidc_provider ? 1 : 0
   url            = "https://token.actions.githubusercontent.com"
   client_id_list = ["sts.amazonaws.com"]
   # AWS validates GitHub's certificate chain itself; these are kept for older tooling.
@@ -12,16 +19,15 @@ resource "aws_iam_openid_connect_provider" "github" {
 }
 
 locals {
-  oidc_arn         = aws_iam_openid_connect_provider.github.arn
+  oidc_arn         = var.create_github_oidc_provider ? aws_iam_openid_connect_provider.github[0].arn : data.aws_iam_openid_connect_provider.github[0].arn
   boundary_arn     = "arn:${local.partition}:iam::${local.account_id}:policy/${local.name}-boundary"
   protected_roles  = "arn:${local.partition}:iam::${local.account_id}:role/${local.name}-gh-*"
   app_role_pattern = "arn:${local.partition}:iam::${local.account_id}:role/${local.name}-*"
   # Data the CI roles must never read: snapshots, tables, signing keys.
-  snapshot_objects    = "arn:${local.partition}:s3:::${local.name}-snapshots-*/*"
-  data_tables         = "arn:${local.partition}:dynamodb:*:${local.account_id}:table/${local.name}-*"
-  secret_params       = "arn:${local.partition}:ssm:*:${local.account_id}:parameter/${local.name}/auth/*"
-  cf_token_param      = "arn:${local.partition}:ssm:${var.aws_region}:${local.account_id}:parameter${var.cloudflare_token_parameter}"
-  cf_read_token_param = "arn:${local.partition}:ssm:${var.aws_region}:${local.account_id}:parameter${var.cloudflare_read_token_parameter}"
+  snapshot_objects = "arn:${local.partition}:s3:::${local.name}-snapshots-*/*"
+  data_tables      = "arn:${local.partition}:dynamodb:*:${local.account_id}:table/${local.name}-*"
+  secret_params    = "arn:${local.partition}:ssm:*:${local.account_id}:parameter/${local.name}/auth/*"
+  site_zone_arn    = "arn:${local.partition}:route53:::hostedzone/${data.aws_route53_zone.site.zone_id}"
 }
 
 data "aws_iam_policy_document" "trust_plan" {
@@ -79,21 +85,6 @@ data "aws_iam_policy_document" "state_access" {
   }
 }
 
-# PR plans get a read-only Cloudflare token; only deploys get the DNS-edit token.
-data "aws_iam_policy_document" "cf_read_token" {
-  statement {
-    actions   = ["ssm:GetParameter"]
-    resources = [local.cf_read_token_param]
-  }
-}
-
-data "aws_iam_policy_document" "cf_edit_token" {
-  statement {
-    actions   = ["ssm:GetParameter"]
-    resources = [local.cf_token_param]
-  }
-}
-
 data "aws_iam_policy_document" "deny_data" {
   statement {
     sid       = "NoSnapshotReads"
@@ -131,27 +122,6 @@ resource "aws_iam_role_policy" "plan_state" {
   name   = "state"
   role   = aws_iam_role.plan.id
   policy = data.aws_iam_policy_document.state_access.json
-}
-
-resource "aws_iam_role_policy" "plan_cf" {
-  name   = "cloudflare-read-token"
-  role   = aws_iam_role.plan.id
-  policy = data.aws_iam_policy_document.cf_read_token.json
-}
-
-# ReadOnlyAccess includes ssm:GetParameter; make sure PRs can't read the DNS-edit token.
-data "aws_iam_policy_document" "plan_no_edit_token" {
-  statement {
-    effect    = "Deny"
-    actions   = ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParameterHistory"]
-    resources = [local.cf_token_param]
-  }
-}
-
-resource "aws_iam_role_policy" "plan_no_edit_token" {
-  name   = "deny-cloudflare-edit-token"
-  role   = aws_iam_role.plan.id
-  policy = data.aws_iam_policy_document.plan_no_edit_token.json
 }
 
 resource "aws_iam_role_policy" "plan_deny_data" {
@@ -197,8 +167,28 @@ data "aws_iam_policy_document" "deploy" {
       "dynamodb:Describe*", "dynamodb:List*", "s3:ListAllMyBuckets", "cloudwatch:Describe*", "cloudwatch:List*",
       "sns:Get*", "sns:List*", "scheduler:Get*", "scheduler:List*", "iam:Get*", "iam:List*", "ssm:DescribeParameters",
       "sts:GetCallerIdentity", "budgets:View*", "tag:GetResources",
+      "route53:GetHostedZone", "route53:ListHostedZones", "route53:ListHostedZonesByName",
+      "route53:ListResourceRecordSets", "route53:GetChange", "route53:ListTagsForResource",
     ]
     resources = ["*"]
+  }
+
+  # DNS: only the platform's own A-alias, in the one existing zone. The zone and its other records
+  # (which other services own) cannot be changed.
+  statement {
+    sid       = "SiteRecordOnly"
+    actions   = ["route53:ChangeResourceRecordSets"]
+    resources = [local.site_zone_arn]
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "route53:ChangeResourceRecordSetsNormalizedRecordNames"
+      values   = [local.site_record_name]
+    }
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "route53:ChangeResourceRecordSetsRecordTypes"
+      values   = ["A"]
+    }
   }
 
   statement {
@@ -211,9 +201,10 @@ data "aws_iam_policy_document" "deploy" {
     actions   = ["lambda:CreateFunction", "lambda:TagResource", "lambda:UntagResource"]
     resources = ["*"]
   }
+  # ACM is read only (above): the certificate is an existing one, looked up, never created.
   statement {
-    sid       = "ApiGatewayCloudFrontAcm"
-    actions   = ["apigateway:*", "cloudfront:*", "acm:*"]
+    sid       = "ApiGatewayCloudFront"
+    actions   = ["apigateway:*", "cloudfront:*"]
     resources = ["*"]
   }
   statement {
@@ -313,12 +304,6 @@ resource "aws_iam_role_policy" "deploy_state" {
   name   = "state"
   role   = aws_iam_role.deploy.id
   policy = data.aws_iam_policy_document.state_access.json
-}
-
-resource "aws_iam_role_policy" "deploy_cf" {
-  name   = "cloudflare-edit-token"
-  role   = aws_iam_role.deploy.id
-  policy = data.aws_iam_policy_document.cf_edit_token.json
 }
 
 resource "aws_iam_role_policy" "deploy_deny_data" {
